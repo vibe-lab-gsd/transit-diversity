@@ -125,6 +125,12 @@ county_area = sum(tracts$ALAND)
 tracts <- tracts %>%
   filter(lengths(st_is_within_distance(tracts, route_locs, dist = 500)) > 0)
 
+tracts %>%
+  select(GEOID) %>%
+  st_drop_geometry() %>%
+  write_csv(file = here("02-data",
+                        "study-area-tracts.csv"))
+
 pct_pop_in_area = sum(tracts$P1_001N) / county_pop
 pct_county_in_area = sum(tracts$ALAND) / county_area
 ```
