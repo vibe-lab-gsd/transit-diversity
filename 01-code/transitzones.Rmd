@@ -104,18 +104,33 @@ route_locs <- full_join(lines, activity) %>%
 
 # Define study area
 
-The study area is defined as the set of tracts within 500 meters of an LA Metro transit stop. This represents 41 percent of land area of Los Angeles County and 76 percent of the population.
+The study area is defined as the set of Los Angeles County zip code tabulation areas within 500 meters of an LA Metro transit stop. Five zip codes were excluded in order to more closely align a 
+census-block-based study area with a zip-code-based study area. 
 
 ```{r}
+la_co = counties(state = "CA") %>%
+  filter(NAME == "Los Angeles")
+
 zctas <- get_decennial(geography = "zcta",
                            state = "CA", 
                            variables = "P001001", # Total population
                            year = 2010,
                            output = "wide",
-                          geometry = TRUE) 
+                          geometry = TRUE) %>%
+  st_filter(la_co)
+  
 
 zctas <- zctas %>%
   filter(lengths(st_is_within_distance(zctas, route_locs, dist = 500)) > 0) %>%
+  filter(NAME != "ZCTA5 90265, California" & # for boundaries to match
+           NAME != "ZCTA5 91361, California" & # for boundaries to match
+           NAME != "ZCTA5 91360, California" & # for boundaries to match
+           NAME != "ZCTA5 91362, California" & # for boundaries to match
+           NAME != "ZCTA5 91307, California" & # for boundaries to match
+           NAME != "ZCTA5 90263, California" & # for a contiguous study area
+           NAME != "ZCTA5 92833, California" & # Orange county
+           NAME != "ZCTA5 90621, California" & # Orange county
+           NAME != "ZCTA5 90620, California") %>% # Orange county
   st_transform("WGS84")
 
 zctas %>%
@@ -169,7 +184,7 @@ blocks <- blocks %>%
 
 # Create route zone boundaries
 
-The summarize function takes a very long time (a little over an hour). I'm saving the result so you can just read it from file and skip this chunk.
+The summarize function takes a very long time. I'm saving the result so you can just read it from file and skip this chunk.
 
 ```{r, eval=FALSE}
 route_zones <- blocks %>%
@@ -196,7 +211,7 @@ map <- leaflet(route_zones) %>%
       fillOpacity = 1,
       bringToFront = FALSE),
       weight = 1,
-      color = "black",
+      color = "green",
       fillColor = "green",
       label = ~ route) 
 
