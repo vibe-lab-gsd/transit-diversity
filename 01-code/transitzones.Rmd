@@ -22,7 +22,7 @@ library(tidytransit)
 
 The goal of this analysis is to generate a set of transit route service areas such that every census block in the study area is assigned to the service area of exactly one transit route.
 
-The study area is the set of census tracts in Los Angeles County with 500 meters of a transit stop.
+The study area is the set of zip code tabulation areas in Los Angeles County with 500 meters of a transit stop.
 
 #Load ridership data
 
@@ -107,32 +107,23 @@ route_locs <- full_join(lines, activity) %>%
 The study area is defined as the set of tracts within 500 meters of an LA Metro transit stop. This represents 41 percent of land area of Los Angeles County and 76 percent of the population.
 
 ```{r}
-tract_pop <- get_decennial(geography = "tract",
+zctas <- get_decennial(geography = "zcta",
                            state = "CA", 
-                           county = "Los Angeles",
-                           variables = "P1_001N",
-                           year = 2020,
-                           output = "wide") 
+                           variables = "P001001", # Total population
+                           year = 2010,
+                           output = "wide",
+                          geometry = TRUE) 
 
-tracts <- tracts(state = "CA", 
-                 county = "Los Angeles") %>%
-  st_transform("WGS84") %>%
-  left_join(tract_pop, by = "GEOID")
+zctas <- zctas %>%
+  filter(lengths(st_is_within_distance(zctas, route_locs, dist = 500)) > 0) %>%
+  st_transform("WGS84")
 
-county_pop = sum(tracts$P1_001N)
-county_area = sum(tracts$ALAND)
-
-tracts <- tracts %>%
-  filter(lengths(st_is_within_distance(tracts, route_locs, dist = 500)) > 0)
-
-tracts %>%
-  select(GEOID) %>%
+zctas %>%
+  select(NAME) %>%
   st_drop_geometry() %>%
   write_csv(file = here("02-data",
-                        "study-area-tracts.csv"))
+                        "study-area-zips.csv"))
 
-pct_pop_in_area = sum(tracts$P1_001N) / county_pop
-pct_county_in_area = sum(tracts$ALAND) / county_area
 ```
 
 ## Map study area
@@ -140,7 +131,7 @@ pct_county_in_area = sum(tracts$ALAND) / county_area
 Here is an interactive map of the census tracts in the study area.
 
 ```{r}
-map <- leaflet(tracts) %>%
+map <- leaflet(zctas) %>%
   addProviderTiles(providers$Stamen.TonerLite) %>%
   addPolygons(highlightOptions = highlightOptions(
       weight = 1,
@@ -149,24 +140,31 @@ map <- leaflet(tracts) %>%
       weight = 1,
       fillColor = "green",
       color = "green",
-      label = ~ GEOID)
+      label = ~ NAME)
 
 here("03-maps",
-     "tracts.html") %>%  
+     "zips.html") %>%  
   saveWidget(widget = map, .)
 ```
 
 # Load census blocks
 
-```{r}
-blocks <- blocks(state = "CA", county = "Los Angeles") %>%
-  st_transform("WGS84") %>%
-  mutate(tract = substr(GEOID20, 1, 11))
+Get a list of all the census blocks in the study area and assign each block to the 
+closest route.
 
+```{r}
+blocks <- blocks(state = "CA", county = "Los Angeles", year = 2010) %>%
+  st_transform("WGS84") 
+
+block_ctrs <- st_centroid(blocks) %>%
+  st_filter(zctas) %>%
+  select(GEOID10) %>%
+  st_drop_geometry()
+  
 blocks <- blocks %>%
-  filter(tract %in% tracts$GEOID) %>%
+  right_join(block_ctrs) %>%
   st_join(route_locs, join = st_nearest_feature) %>%
-  select(GEOID20, route) 
+  select(GEOID10, route) 
 ```
 
 # Create route zone boundaries
@@ -187,7 +185,9 @@ here("02-data",
 ## Map the boundaries
 
 ```{r}
-route_zones <- st_read("route-zones.geojson")
+route_zones <- here("02-data",
+                    "route-zones.geojson") %>%
+  st_read()
 
 map <- leaflet(route_zones) %>%
   addProviderTiles(providers$Stamen.TonerLite) %>%
