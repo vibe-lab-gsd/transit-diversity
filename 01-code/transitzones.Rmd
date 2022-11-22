@@ -102,6 +102,28 @@ route_locs <- full_join(lines, activity) %>%
   
 ```
 
+Steps to doing this with GTFS:
+
+You want to end up with a data frame with each stop in one row, and a column indicating the route that 
+stops there most frequently.
+
+What you start with:
+stops.txt: Locations of each stop (lat, long and stop_id)
+stop_times.txt: Arrival times at each stop for each trip (stop_id and trip_id)
+trips.txt: Tells you which trips belong to which route and service pattern (trip_id and service_id and route_id)
+calendar.txt and calendar_dates.txt which service patterns are running on which days.
+
+```{r}
+la_gtfs <- here("02-data",
+     "la_gtfs.zip") %>%
+  read_gtfs()
+
+route_summary <- get_route_frequency(la_gtfs)
+
+## Question: Why is it only returning frequencies for 21 routes?
+```
+
+
 # Define study area
 
 The study area is defined as the set of Los Angeles County zip code tabulation areas within 500 meters of an LA Metro transit stop. Five zip codes were excluded in order to more closely align a 
