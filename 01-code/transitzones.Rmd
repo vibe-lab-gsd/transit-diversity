@@ -1,7 +1,7 @@
 ---
 title: "Mutually exclusive transit service areas"
-author: "Carole Voulgaris"
-date: "4/7/2022"
+author: "Carole Voulgaris Gabriel Barrett-Jackson"
+date: "12/27/2022"
 output: html_document
 ---
 
@@ -14,98 +14,21 @@ library(tidyverse)
 library(sf)
 library(tigris)
 library(tidycensus)
-library(here)
 library(leaflet)
 library(htmlwidgets)
 library(tidytransit)
+library(utils)
+library(magrittr)
+library(here)
 ```
 
 The goal of this analysis is to generate a set of transit route service areas such that every census block in the study area is assigned to the service area of exactly one transit route.
 
-The study area is the set of zip code tabulation areas in Los Angeles County with 500 meters of a transit stop.
-
-#Load ridership data
-
-Stop level ridership data for October 2019 are from https://la-metro.maps.arcgis.com/home/item.html?id=a1d134368e5e4fe48087b187da7354d2. This is a shapefile with the total number of boardings and alightings on each route served by each transit stop. 
-
-This analysis requires us to assign each transit stop to exactly one route. Many transit stops (3374 out of 14058, or 24 percent) serve more than one route, in these cases, the stop was assigned to the route with the highest activity (boardings plus alightings) at that stop.
-
-```{r}
-ridership <- here("02-data",
-                  "LA_metro_oct2019.csv") %>%
-  st_read(options=c("X_POSSIBLE_NAMES=long_",
-                    "Y_POSSIBLE_NAMES=lat")) %>%
-  st_set_crs("WGS84") %>%
-   select(stopnum, 
-          DX_ACT_1,
-          DX_ACT_2,
-          DX_ACT_3,
-          DX_ACT_4,
-          DX_ACT_5,
-          DX_ACT_6,
-          DX_ACT_7,
-          DX_ACT_8,
-          DX_ACT_9,
-          DX_ACT_10,
-          DX_ACT_11,
-          DX_ACT_12,
-          DX_ACT_13,
-          DX_ACT_14,
-          DX_ACT_15,
-          DX_ACT_16,
-          DX_ACT_17,
-          DX_ACT_18,
-          LINEDIR_1,
-          LINEDIR_2,
-          LINEDIR_3,
-          LINEDIR_4,
-          LINEDIR_5,
-          LINEDIR_6,
-          LINEDIR_7,
-          LINEDIR_8,
-          LINEDIR_9,
-          LINEDIR_10,
-          LINEDIR_11,
-          LINEDIR_12,
-          LINEDIR_13,
-          LINEDIR_14,
-          LINEDIR_15,
-          LINEDIR_16,
-          LINEDIR_17,
-          LINEDIR_18) 
-
-activity <- ridership %>%
-  select(stopnum, starts_with("DX_ACT")) %>%
-  pivot_longer(cols = starts_with("DX_ACT"),
-               names_to = "line",
-               names_prefix = "DX_ACT_",
-               values_to = "DX_ACT") %>%
-  filter(DX_ACT != "") %>%
-  mutate(DX_ACT = as.numeric(DX_ACT)) %>%
-  st_drop_geometry()
-
-lines <- ridership %>%
-  select(stopnum, starts_with("LINEDIR")) %>%
-  pivot_longer(cols = starts_with("LINEDIR"),
-               names_to = "line",
-               names_prefix = "LINEDIR_",
-               values_to = "LINEDIR") %>%
-  filter(LINEDIR != "") 
-
-route_locs <- full_join(lines, activity) %>%
-  mutate(route = str_split_fixed(LINEDIR, "-", 2)[,1]) %>%
-  group_by(stopnum) %>%
-  mutate(max_riders = max(DX_ACT)) %>%
-  ungroup() %>%
-  filter(DX_ACT == max_riders) %>%
-  select(route)
-  
-```
+The study area is the set of zip code tabulation areas in Los Angeles, Chicago, Dallas, and Boston with 500 meters of a transit stop.
 
 Steps to doing this with GTFS:
 
-You want to end up with a data frame with each stop in one row, and a column indicating the route that 
-stops there most frequently.
+You want to end up with a data frame with each stop in one row, and a column indicating the route that stops there most frequently.
 
 What you start with:
 stops.txt: Locations of each stop (lat, long and stop_id)
@@ -113,37 +36,69 @@ stop_times.txt: Arrival times at each stop for each trip (stop_id and trip_id)
 trips.txt: Tells you which trips belong to which route and service pattern (trip_id and service_id and route_id)
 calendar.txt and calendar_dates.txt which service patterns are running on which days.
 
+#Los Angeles
+
+## Read your GTFS data into R:
+
 ```{r}
-la_gtfs <- here("02-data",
-     "la_gtfs.zip") %>%
-  read_gtfs()
+la_stops_path <- "../02-data/LA_Metro_4OCT2019/stops.txt"
 
-route_summary <- get_route_frequency(la_gtfs)
+la_stops <- read_csv(la_stops_path) %>%
+  select(stop_id, stop_lon, stop_lat)
 
-## Question: Why is it only returning frequencies for 21 routes?
+la_times_path <- "../02-data/LA_Metro_4OCT2019/stop_times.txt"
+
+la_times <- read_csv(la_times_path)
+
+la_routes_path <- "../02-data/LA_Metro_4OCT2019/routes.txt"
+
+la_routes <- read_csv(la_routes_path)
+
+la_times <- la_times %>%
+  separate(stop_headsign, into=c("route_short_name","route_desc"), sep=" - ", extra = "merge")
+
+la_stop_sums <- la_times %>%
+  group_by(stop_id, route_short_name) %>%
+  tally()
+
+la_stop_sums_freq <- la_stop_sums %>%
+  left_join(la_stops) %>%
+  slice_max(n)
+  
+la_stops_sums_freq_sf = st_as_sf(la_stop_sums_freq, coords = c("stop_lon", "stop_lat"), 
+                 crs = 4326, agr = "constant")  
 ```
 
+## Define study area
 
-# Define study area
-
-The study area is defined as the set of Los Angeles County zip code tabulation areas within 500 meters of an LA Metro transit stop. Five zip codes were excluded in order to more closely align a 
-census-block-based study area with a zip-code-based study area. 
+The study area is defined as the set of Los Angeles County zip code tabulation areas within 500 meters of an LA Metro transit stop. Five zip codes were excluded in order to more closely align a census-block-based study area with a zip-code-based study area. 
 
 ```{r}
-la_co = counties(state = "CA") %>%
-  filter(NAME == "Los Angeles")
+demographics <- c(
+   tot_pop = "P001001", 
+   blk_pop = "P003003", 
+   hispanic_pop = "P004001", 
+   asian_pop = "P003005",
+   white_pop = "P003002", 
+   native_pop = "P003004")
+```
+
+```{r}
+la_co = counties(state = "CA", year = 2010) %>%
+  filter(NAME10 == "Los Angeles")
 
 zctas <- get_decennial(geography = "zcta",
-                           state = "CA", 
-                           variables = "P001001", # Total population
+                           state = "CA",
+                           variables = demographics,
                            year = 2010,
                            output = "wide",
                           geometry = TRUE) %>%
   st_filter(la_co)
-  
+
+nstops <- lengths(st_is_within_distance(zctas, la_stops_sums_freq_sf, dist = 500))
 
 zctas <- zctas %>%
-  filter(lengths(st_is_within_distance(zctas, route_locs, dist = 500)) > 0) %>%
+  filter(nstops > 0) %>%
   filter(NAME != "ZCTA5 90265, California" & # for boundaries to match
            NAME != "ZCTA5 91361, California" & # for boundaries to match
            NAME != "ZCTA5 91360, California" & # for boundaries to match
@@ -155,12 +110,12 @@ zctas <- zctas %>%
            NAME != "ZCTA5 90620, California") %>% # Orange county
   st_transform("WGS84")
 
+#st_is_within_distance(x, y = x, dist, sparse = TRUE, ...)
+
 zctas %>%
   select(NAME) %>%
   st_drop_geometry() %>%
-  write_csv(file = here("02-data",
-                        "study-area-zips.csv"))
-
+  write_csv(file = "../02-data/study-area-zips.csv")
 ```
 
 ## Map study area
@@ -190,18 +145,26 @@ Get a list of all the census blocks in the study area and assign each block to t
 closest route.
 
 ```{r}
-blocks <- blocks(state = "CA", county = "Los Angeles", year = 2010) %>%
-  st_transform("WGS84") 
+blocks <- get_decennial(geography="block",
+                state = "CA", 
+                county = "Los Angeles", 
+                variables = demographics,
+                year = 2010,
+                geometry = TRUE) %>%
+  st_transform(st_crs(zctas))
 
-block_ctrs <- st_centroid(blocks) %>%
+blocks_in_zctas <- st_centroid(blocks) %>%
   st_filter(zctas) %>%
-  select(GEOID10) %>%
+  select(GEOID) %>%
   st_drop_geometry()
   
-blocks <- blocks %>%
-  right_join(block_ctrs) %>%
-  st_join(route_locs, join = st_nearest_feature) %>%
-  select(GEOID10, route) 
+blocks_filtered <- blocks %>%
+  filter(GEOID %in% blocks_in_zctas$GEOID) %>%
+  #right_join(block_in_zctas) %>%
+  st_join(la_stops_sums_freq_sf, join = st_nearest_feature) %>%
+  select(GEOID, route_short_name, variable, value) %>%
+  pivot_wider(names_from = "variable",
+              values_from = "value")
 ```
 
 # Create route zone boundaries
@@ -209,8 +172,8 @@ blocks <- blocks %>%
 The summarize function takes a very long time. I'm saving the result so you can just read it from file and skip this chunk.
 
 ```{r, eval=FALSE}
-route_zones <- blocks %>%
-  group_by(route) %>%
+route_zones <- blocks_filtered %>%
+  group_by(route_short_name) %>%
   summarise()
 
 here("02-data",
@@ -218,14 +181,12 @@ here("02-data",
   st_write(obj = route_zones, .)
 ```
 
-
 ## Map the boundaries
 
 ```{r}
 route_zones <- here("02-data",
                     "route-zones.geojson") %>%
   st_read()
-
 map <- leaflet(route_zones) %>%
   addProviderTiles(providers$Stamen.TonerLite) %>%
   addPolygons(highlightOptions = highlightOptions(
@@ -235,7 +196,7 @@ map <- leaflet(route_zones) %>%
       weight = 1,
       color = "green",
       fillColor = "green",
-      label = ~ route) 
+      label = route_zones$route_short_name) 
 
 here("03-maps",
      "route-zones.html") %>%  
@@ -251,3 +212,353 @@ blocks %>%
                  "blocks-by-route.csv"))
 ```
 
+# Index of Dissimilarity
+
+```{r}
+dissimilarity_index <- function(dat, pop1, pop2, tot_pop="tot_pop") {
+  total_pop <- sum(dat[tot_pop], na.rm = TRUE)
+  p1 <- sum(dat[pop1], na.rm = TRUE)/total_pop
+  p2 <- sum(dat[pop2], na.rm = TRUE)/total_pop
+  dissimilarity <- sum(abs(p1-p2))/2
+  return(dissimilarity)
+}
+
+```
+
+# Index of isolation
+
+```{r}
+isolation_index <- function(dat, pop1, pop2, tot_pop="tot_pop") {
+  total_pop <- sum(dat[tot_pop], na.rm = TRUE)
+  p1 <- sum(dat[pop1], na.rm = TRUE)/total_pop
+  p2 <- sum(dat[pop2], na.rm = TRUE)/total_pop
+  isolation1 <- sum(p1^2)/sum(p1)
+  isolation2 <- sum(p2^2)/sum(p2)
+  isolation <- (isolation1 + isolation2)/2
+  return(isolation)
+}
+
+```
+
+# Index of Relative Concentration
+
+```{r}
+relative_concentration_index <- function(dat, pop1, pop2, tot_pop="tot_pop") {
+  total_pop <- sum(dat[tot_pop], na.rm = TRUE)
+  p1 <- sum(dat[pop1], na.rm = TRUE)/total_pop
+  p2 <- sum(dat[pop2], na.rm = TRUE)/total_pop
+  rconcentration1 <- sum(p1^2)/(sum(p1^2) + sum(p2^2))
+  rconcentration2 <- sum(p2^2)/(sum(p1^2) + sum(p2^2))
+  relative_concentration <- (rconcentration1 + rconcentration2)/2
+  return(relative_concentration)
+}
+
+```
+
+
+
+
+
+
+
+
+
+
+
+#Boston
+
+
+## 1. Read your GTFS data into R using the here() function:
+
+```{r}
+mbta_stops_path <- "../02-data/BOSTON_MBTA_4OCT2019/stops.txt"
+
+mbta_stops <- read_csv(mbta_stops_path) %>%
+  select(stop_id, stop_lon, stop_lat)
+
+mbta_times_path <- "../02-data/BOSTON_MBTA_4OCT2019/stop_times.txt"
+
+mbta_times <- read_csv(mbta_times_path)
+
+mbta_trips <- read_csv("../02-data/BOSTON_MBTA_4OCT2019/trips.txt") %>%
+  select(trip_id, route_id)
+
+mbta_routes_path <- "../02-data/BOSTON_MBTA_4OCT2019/routes.txt"
+
+mbta_routes <- read_csv(mbta_routes_path) %>%
+  filter(route_desc %in% c("Key Bus", "Local Bus"))
+
+mbta_stops_sums <- mbta_trips %>%
+  left_join(mbta_times) %>%
+  group_by(stop_id, route_id) %>%
+  tally()
+```
+
+## 2. Use the clean_gtfs() function to create tidy data frames for the stops and stop_times tables in the GTFS data:
+
+```{r}
+stops_tidy <- clean_gtfs(gtfs_mbta, "stops")
+stop_times_tidy <- clean_gtfs(gtfs_mbta, "stop_times")
+```
+
+## 3. Use the dplyr package to join the stops_tidy and stop_times_tidy data frames on the stop_id column and group the data by stop_id and route_id:
+
+```{r}
+library(dplyr)
+
+stops_routes <- stops_tidy %>%
+  left_join(stop_times_tidy, by = "stop_id") %>%
+  group_by(stop_id, route_id)
+```
+
+## 4. Use the summarize() function to count the number of trips per route at each stop:
+
+```{r}
+stops_routes_count <- stops_routes %>%
+  summarize(n = n())
+```
+
+## 5. Use the dplyr function arrange() to sort the data frame by the n column in descending order:
+
+```{r}
+stops_routes_count <- stops_routes_count %>%
+  arrange(desc(n))
+```
+
+## 6. Use the dplyr function slice() to select the first row of each group (i.e., the route with the highest number of trips at each stop):
+
+```{r}
+stops_routes_top <- stops_routes_count %>%
+  group_by(stop_id) %>%
+  slice(1)
+```
+
+#Chicago
+
+
+## 1. Read your GTFS data into R using the here() function:
+
+```{r}
+cta_stops_path <- "../02-data/CHICAGO_CTA_4OCT2019/stops.txt"
+
+cta_stops <- read_csv(cta_stops_path) %>%
+  select(stop_id, stop_lon, stop_lat)
+
+cta_times_path <- "../02-data/CHICAGO_CTA_4OCT2019/stop_times.txt"
+
+cta_times <- read_csv(cta_times_path)
+
+cta_routes_path <- "../02-data/CHICAGO_CTA_4OCT2019/routes.txt"
+
+cta_routes <- read_csv(cta_routes_path)
+
+#cta_times <- cta_times %>%
+
+#la_times <- la_times %>%
+  #separate(stop_headsign, into=c("route_short_name","route_desc"), sep=" - ", extra = "merge")  
+  
+```
+
+```{r}
+#la_stop_sums <- la_times %>%
+  #group_by(stop_id, route_short_name) %>%
+  #count()
+```
+
+## 2. Use the clean_gtfs() function to create tidy data frames for the stops and stop_times tables in the GTFS data:
+
+```{r}
+stops_tidy <- clean_gtfs(gtfs_cta, "stops")
+stop_times_tidy <- clean_gtfs(gtfs_cta, "stop_times")
+```
+
+## 3. Use the dplyr package to join the stops_tidy and stop_times_tidy data frames on the stop_id column and group the data by stop_id and route_id:
+
+```{r}
+library(dplyr)
+
+stops_routes <- stops_tidy %>%
+  left_join(stop_times_tidy, by = "stop_id") %>%
+  group_by(stop_id, route_id)
+```
+
+## 4. Use the summarize() function to count the number of trips per route at each stop:
+
+```{r}
+stops_routes_count <- stops_routes %>%
+  summarize(n = n())
+```
+
+## 5. Use the dplyr function arrange() to sort the data frame by the n column in descending order:
+
+```{r}
+stops_routes_count <- stops_routes_count %>%
+  arrange(desc(n))
+```
+
+## 6. Use the dplyr function slice() to select the first row of each group (i.e., the route with the highest number of trips at each stop):
+
+```{r}
+stops_routes_top <- stops_routes_count %>%
+  group_by(stop_id) %>%
+  slice(1)
+```
+
+# Dallas
+
+
+## 1. Read your GTFS data into R using the here() function:
+
+```{r}
+dart_stops_path <- "../02-data/DALLAS_DART_4OCT2019/stops.txt"
+
+dart_stops <- read_csv(dart_stops_path) %>%
+  select(stop_id, stop_lon, stop_lat)
+
+dart_times_path <- "../02-data/DALLAS_DART_4OCT2019/stop_times.txt"
+
+dart_times <- read_csv(dart_times_path)
+
+dart_routes_path <- "../02-data/DALLAS_DART_4OCT2019/routes.txt"
+
+dart_routes <- read_csv(dart_routes_path)
+
+#dart_times <- dart_times %>%
+  
+#la_times <- la_times %>%
+  #separate(stop_headsign, into=c("route_short_name","route_desc"), sep=" - ", extra = "merge")    
+```
+
+```{r}
+#la_stop_sums <- la_times %>%
+  #group_by(stop_id, route_short_name) %>%
+  #count()
+```
+
+
+## 2. Use the clean_gtfs() function to create tidy data frames for the stops and stop_times tables in the GTFS data:
+
+```{r}
+stops_tidy <- clean_gtfs(gtfs_dart, "stops")
+stop_times_tidy <- clean_gtfs(gtfs_dart, "stop_times")
+```
+
+## 3. Use the dplyr package to join the stops_tidy and stop_times_tidy data frames on the stop_id column and group the data by stop_id and route_id:
+
+```{r}
+library(dplyr)
+
+stops_routes <- stops_tidy %>%
+  left_join(stop_times_tidy, by = "stop_id") %>%
+  group_by(stop_id, route_id)
+```
+
+## 4. Use the summarize() function to count the number of trips per route at each stop:
+
+```{r}
+stops_routes_count <- stops_routes %>%
+  summarize(n = n())
+```
+
+## 5. Use the dplyr function arrange() to sort the data frame by the n column in descending order:
+
+```{r}
+stops_routes_count <- stops_routes_count %>%
+  arrange(desc(n))
+```
+
+## 6. Use the dplyr function slice() to select the first row of each group (i.e., the route with the highest number of trips at each stop):
+
+```{r}
+stops_routes_top <- stops_routes_count %>%
+  group_by(stop_id) %>%
+  slice(1)
+```
+
+## Calculate accessibility
+
+```{r}
+# Load the required libraries
+library(igraph)
+library(httr)
+
+# Define the API key
+api_key <- "b8064d02a4943b2c25e30fca13e816fc"
+
+# Define the base URL for the API
+base_url <- "https://api.metro.net"
+
+# Define the endpoint for the bus routes
+routes_endpoint <- "/api/v3/routes"
+
+# Make a request to the API to retrieve the bus routes
+routes_response <- GET(paste0(base_url, routes_endpoint), query = list(api_key = api_key))
+
+# Parse the JSON response into a data frame
+routes_data <- content(routes_response, as = "parsed")$items
+
+# Filter the routes data to only include bus routes
+bus_routes_data <- routes_data[routes_data$mode == "bus",]
+
+# Define the endpoint for the stops
+stops_endpoint <- "/api/v3/stops"
+
+# Make a request to the API to retrieve the stops
+stops_response <- GET(paste0(base_url, stops_endpoint), query = list(api_key = api_key))
+
+# Parse the JSON response into a data frame
+stops_data <- content(stops_response, as = "parsed")$items
+
+# Create a graph object representing the LA Metro bus network
+bus_network_graph <- graph_empty(n = nrow(stops_data))
+
+# Add edges between the stops to represent the bus routes
+for (i in 1:nrow(bus_routes_data)) {
+  route_id <- bus_routes_data[i, "id"]
+  route_endpoint <- paste0("/api/v3/routes/", route_id, "/sequence")
+  route_response <- GET(paste0(base_url, route_endpoint), query = list(api_key = api_key))
+  route_data <- content(route_response, as = "parsed")$items
+  
+  for (j in 1:(length(route_data) - 1)) {
+    stop1 <- route_data[j]
+    stop2 <- route_data[j + 1]
+    edge_id <- c(stop1$id, stop2$id)
+    edge_weight <- distHaversine(c(stop1$latitude, stop1$longitude), c(stop2$latitude, stop2$longitude))
+    E(bus_network_graph) <- c(E(bus_network_graph), edge_id)
+    set.edge.attribute(bus_network_graph, name = "weight", index = E(bus_network_graph)[length(E(bus_network_graph))], value = edge_weight)
+  }
+}
+
+# Define a function to calculate the accessibility measure for a given origin and destination
+calculate_accessibility <- function(origin, destination) {
+  shortest_path <- shortest.paths(bus_network_graph, origin, destination, weights = E(bus_network_graph)$weight, output = "epath")
+  accessibility <- sum(E(bus_network_graph)$weight[shortest_path[[1]]])
+  return(accessibility)
+}
+```
+
+```{r}
+library(ggplot2)
+
+# Create a data frame to store the accessibility values
+accessibility_data <- data.frame(origin = character(), destination = character(), accessibility = numeric())
+
+# Loop over all combinations of origin and destination stops
+for (i in 1:nrow(stops_data)) {
+  for (j in 1:nrow(stops_data)) {
+    # Calculate the accessibility between the origin and destination
+    accessibility <- calculate_accessibility(i, j)
+    # Add the origin, destination, and accessibility values to the data frame
+    accessibility_data <- rbind(accessibility_data, data.frame(origin = stops_data$stop_id[i], destination = stops_data$stop_id[j], accessibility = accessibility))
+  }
+}
+
+# Plot the accessibility data as a heat map
+ggplot(data = accessibility_data, aes(x = origin, y = destination, fill = accessibility)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "red") +
+  theme_minimal() +
+  xlab("Origin") +
+  ylab("Destination") +
+  ggtitle("Accessibility between Bus Stops in LA Metro")
+```
