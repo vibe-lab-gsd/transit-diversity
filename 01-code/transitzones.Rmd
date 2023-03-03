@@ -22,6 +22,32 @@ library(magrittr)
 library(here)
 ```
 
+```{r}
+#tot_pop <- "P001001"
+blk_pop <- "P003003"
+hispanic_pop <- "P005001"
+asian_pop <- "P003005"
+white_pop <- "P005003" 
+nat_am_pop <- "P003004"
+nhpi_pop <- "P003006"
+
+demographics <- c(
+   #tot_pop = "P001001", 
+   blk_pop = "P003003", 
+   hispanic_pop = "P005001", 
+   asian_pop = "P003005",
+   white_pop = "P005003", 
+   nat_am_pop = "P003004",
+   nhpi_pop = "P003006")
+   
+#non_white_pop <- c(
+   #blk_pop = "P003003", 
+   #hispanic_pop = "P004001", 
+   #asian_pop = "P003005",
+   #nat_am_pop = "P003004",
+   #nhpi_pop = "P003006")
+```
+
 The goal of this analysis is to generate a set of transit route service areas such that every census block in the study area is assigned to the service area of exactly one transit route.
 
 The study area is the set of zip code tabulation areas in Los Angeles, Chicago, Dallas, and Boston with 500 meters of a transit stop.
@@ -74,31 +100,22 @@ la_stops_sums_freq_sf = st_as_sf(la_stop_sums_freq, coords = c("stop_lon", "stop
 The study area is defined as the set of Los Angeles County zip code tabulation areas within 500 meters of an LA Metro transit stop. Five zip codes were excluded in order to more closely align a census-block-based study area with a zip-code-based study area. 
 
 ```{r}
-demographics <- c(
-   tot_pop = "P001001", 
-   blk_pop = "P003003", 
-   hispanic_pop = "P004001", 
-   asian_pop = "P003005",
-   white_pop = "P003002", 
-   native_pop = "P003004")
-```
-
-```{r}
 la_co = counties(state = "CA", year = 2010) %>%
   filter(NAME10 == "Los Angeles")
 
-zctas <- get_decennial(geography = "zcta",
+la_zctas <- get_decennial(geography = "zcta",
                            state = "CA",
                            variables = demographics,
                            year = 2010,
                            output = "wide",
                           geometry = TRUE) %>%
-  st_filter(la_co)
+  st_filter(la_co) %>%
+  mutate(area = st_area(.))
 
-nstops <- lengths(st_is_within_distance(zctas, la_stops_sums_freq_sf, dist = 500))
+la_nstops <- lengths(st_is_within_distance(la_zctas, la_stops_sums_freq_sf, dist = 500))
 
-zctas <- zctas %>%
-  filter(nstops > 0) %>%
+la_zctas <- la_zctas %>%
+  filter(la_nstops > 0) %>%
   filter(NAME != "ZCTA5 90265, California" & # for boundaries to match
            NAME != "ZCTA5 91361, California" & # for boundaries to match
            NAME != "ZCTA5 91360, California" & # for boundaries to match
@@ -112,18 +129,22 @@ zctas <- zctas %>%
 
 #st_is_within_distance(x, y = x, dist, sparse = TRUE, ...)
 
-zctas %>%
+la_zctas <- la_zctas %>%
+  #mutate(non_white_pop = blk_pop + hispanic_pop + asian_pop + nat_am_pop + nhpi_pop) %>%
+  mutate(la_tot_pop = blk_pop + white_pop + hispanic_pop + asian_pop + nat_am_pop + nhpi_pop)
+
+la_zctas %>%
   select(NAME) %>%
   st_drop_geometry() %>%
-  write_csv(file = "../02-data/study-area-zips.csv")
+  write_csv(file = "../02-data/la-area-zips.csv")
 ```
 
 ## Map study area
 
-Here is an interactive map of the census tracts in the study area.
+Here is an interactive map of the zip code tabulation areas in the study area.
 
 ```{r}
-map <- leaflet(zctas) %>%
+la_map <- leaflet(la_zctas) %>%
   addProviderTiles(providers$Stamen.TonerLite) %>%
   addPolygons(highlightOptions = highlightOptions(
       weight = 1,
@@ -136,7 +157,7 @@ map <- leaflet(zctas) %>%
 
 here("03-maps",
      "zips.html") %>%  
-  saveWidget(widget = map, .)
+  saveWidget(widget = la_map, .)
 ```
 
 # Load census blocks
@@ -145,26 +166,34 @@ Get a list of all the census blocks in the study area and assign each block to t
 closest route.
 
 ```{r}
-blocks <- get_decennial(geography="block",
+la_blocks <- get_decennial(geography="block",
                 state = "CA", 
                 county = "Los Angeles", 
                 variables = demographics,
                 year = 2010,
                 geometry = TRUE) %>%
-  st_transform(st_crs(zctas))
+  st_transform(st_crs(la_zctas)) %>%
+  mutate(area = st_area(.))
 
-blocks_in_zctas <- st_centroid(blocks) %>%
-  st_filter(zctas) %>%
+blocks_in_la_zctas <- st_centroid(la_blocks) %>%
+  st_filter(la_zctas) %>%
   select(GEOID) %>%
   st_drop_geometry()
   
-blocks_filtered <- blocks %>%
-  filter(GEOID %in% blocks_in_zctas$GEOID) %>%
+la_blocks_filtered <- la_blocks %>%
+  filter(GEOID %in% blocks_in_la_zctas$GEOID) %>%
   #right_join(block_in_zctas) %>%
   st_join(la_stops_sums_freq_sf, join = st_nearest_feature) %>%
   select(GEOID, route_short_name, variable, value) %>%
   pivot_wider(names_from = "variable",
               values_from = "value")
+
+la_routes_summed <- la_blocks_filtered %>%
+  #mutate(non_white_pop = blk_pop + hispanic_pop + asian_pop + nat_am_pop + nhpi_pop) %>%
+  mutate(la_tot_pop = blk_pop + white_pop + hispanic_pop + asian_pop + nat_am_pop + nhpi_pop) %>%
+  st_drop_geometry() %>%
+  group_by(route_short_name) %>% 
+  summarise(across(.cols = -GEOID, sum))
 ```
 
 # Create route zone boundaries
@@ -172,22 +201,22 @@ blocks_filtered <- blocks %>%
 The summarize function takes a very long time. I'm saving the result so you can just read it from file and skip this chunk.
 
 ```{r, eval=FALSE}
-route_zones <- blocks_filtered %>%
+la_route_zones <- la_blocks_filtered %>%
   group_by(route_short_name) %>%
   summarise()
 
 here("02-data",
-     "route-zones.geojson") %>%  
-  st_write(obj = route_zones, .)
+     "la-route-zones.geojson") %>%  
+  st_write(obj = la_route_zones, .)
 ```
 
 ## Map the boundaries
 
 ```{r}
-route_zones <- here("02-data",
-                    "route-zones.geojson") %>%
+la_route_zones <- here("02-data",
+                    "la-route-zones.geojson") %>%
   st_read()
-map <- leaflet(route_zones) %>%
+la_map <- leaflet(la_route_zones) %>%
   addProviderTiles(providers$Stamen.TonerLite) %>%
   addPolygons(highlightOptions = highlightOptions(
       weight = 1,
@@ -196,79 +225,25 @@ map <- leaflet(route_zones) %>%
       weight = 1,
       color = "green",
       fillColor = "green",
-      label = route_zones$route_short_name) 
+      label = la_route_zones$route_short_name) 
 
 here("03-maps",
-     "route-zones.html") %>%  
-  saveWidget(widget = map, .)
+     "la-route-zones.html") %>%  
+  saveWidget(widget = la_map, .)
 ```
 
 # Save the list of blocks
 
 ```{r}
-blocks %>%
+la_blocks_filtered %>%
   st_drop_geometry() %>%
   write_csv(here("02-data",
-                 "blocks-by-route.csv"))
+                 "la-blocks-by-route.csv"))
 ```
-
-# Index of Dissimilarity
-
-```{r}
-dissimilarity_index <- function(dat, pop1, pop2, tot_pop="tot_pop") {
-  total_pop <- sum(dat[tot_pop], na.rm = TRUE)
-  p1 <- sum(dat[pop1], na.rm = TRUE)/total_pop
-  p2 <- sum(dat[pop2], na.rm = TRUE)/total_pop
-  dissimilarity <- sum(abs(p1-p2))/2
-  return(dissimilarity)
-}
-
-```
-
-# Index of isolation
-
-```{r}
-isolation_index <- function(dat, pop1, pop2, tot_pop="tot_pop") {
-  total_pop <- sum(dat[tot_pop], na.rm = TRUE)
-  p1 <- sum(dat[pop1], na.rm = TRUE)/total_pop
-  p2 <- sum(dat[pop2], na.rm = TRUE)/total_pop
-  isolation1 <- sum(p1^2)/sum(p1)
-  isolation2 <- sum(p2^2)/sum(p2)
-  isolation <- (isolation1 + isolation2)/2
-  return(isolation)
-}
-
-```
-
-# Index of Relative Concentration
-
-```{r}
-relative_concentration_index <- function(dat, pop1, pop2, tot_pop="tot_pop") {
-  total_pop <- sum(dat[tot_pop], na.rm = TRUE)
-  p1 <- sum(dat[pop1], na.rm = TRUE)/total_pop
-  p2 <- sum(dat[pop2], na.rm = TRUE)/total_pop
-  rconcentration1 <- sum(p1^2)/(sum(p1^2) + sum(p2^2))
-  rconcentration2 <- sum(p2^2)/(sum(p1^2) + sum(p2^2))
-  relative_concentration <- (rconcentration1 + rconcentration2)/2
-  return(relative_concentration)
-}
-
-```
-
-
-
-
-
-
-
-
-
-
 
 #Boston
 
-
-## 1. Read your GTFS data into R using the here() function:
+## 1.
 
 ```{r}
 mbta_stops_path <- "../02-data/BOSTON_MBTA_4OCT2019/stops.txt"
@@ -291,46 +266,148 @@ mbta_routes <- read_csv(mbta_routes_path) %>%
 mbta_stops_sums <- mbta_trips %>%
   left_join(mbta_times) %>%
   group_by(stop_id, route_id) %>%
-  tally()
+  tally() %>%
+  left_join(mbta_stops)
+
+mbta_stops_sums_sf = st_as_sf(mbta_stops_sums, coords = c("stop_lon", "stop_lat"), 
+                 crs = 4326, agr = "constant")  
 ```
 
-## 2. Use the clean_gtfs() function to create tidy data frames for the stops and stop_times tables in the GTFS data:
+## 2.
+# MBTA Counties
+```{r mbta_counties}
+mbta_co = counties(state = "MA", year = 2010) 
 
-```{r}
-stops_tidy <- clean_gtfs(gtfs_mbta, "stops")
-stop_times_tidy <- clean_gtfs(gtfs_mbta, "stop_times")
+mbta_co <- mbta_co %>%
+  filter(mbta_co$NAME10 %in% c("Barnstable","Bristol", "Worcester", "Suffolk", "Middlesex", "Norfolk", "Plymouth", "Essex"))
+
+mbta_zctas <- get_decennial(geography = "zcta",
+                           state = "MA",
+                           variables = demographics,
+                           year = 2010,
+                           output = "wide",
+                          geometry = TRUE) %>%
+  st_filter(mbta_co) %>%
+  mutate(area = st_area(.))
+
+mbta_nstops <- lengths(st_is_within_distance(mbta_zctas, mbta_stops_sums_sf, dist = 500))
+
+mbta_zctas <- mbta_zctas %>%
+ filter(mbta_nstops > 0) %>%
+  #filter(NAME != "ZCTA5 90265, California" & # for boundaries to match
+          #NAME != "ZCTA5 91361, California" & # for boundaries to match
+          #NAME != "ZCTA5 91360, California" & # for boundaries to match
+          #NAME != "ZCTA5 91362, California" & # for boundaries to match
+          #NAME != "ZCTA5 91307, California" & # for boundaries to match
+          #NAME != "ZCTA5 90263, California" & # for a contiguous study area
+          #NAME != "ZCTA5 92833, California" & # Orange county
+          #NAME != "ZCTA5 90621, California" & # Orange county
+          #NAME != "ZCTA5 90620, California") %>% # Orange county
+  st_transform("WGS84")
+
+#st_is_within_distance(x, y = x, dist, sparse = TRUE)
+
+mbta_zctas <- mbta_zctas %>%
+  #mutate(non_white_pop = blk_pop + hispanic_pop + asian_pop + nat_am_pop + nhpi_pop) %>%
+  mutate(mbta_tot_pop = blk_pop + white_pop + hispanic_pop + asian_pop + nat_am_pop + nhpi_pop)
+
+mbta_zctas %>%
+  select(NAME) %>%
+  st_drop_geometry() %>%
+  write_csv(file = "../02-data/mbta-area-zips.csv")
 ```
 
 ## 3. Use the dplyr package to join the stops_tidy and stop_times_tidy data frames on the stop_id column and group the data by stop_id and route_id:
 
 ```{r}
-library(dplyr)
+mbta_map <- leaflet(mbta_zctas) %>%
+  addProviderTiles(providers$Stamen.TonerLite) %>%
+  addPolygons(highlightOptions = highlightOptions(
+      weight = 1,
+      fillOpacity = 1,
+      bringToFront = TRUE),
+      weight = 1,
+      fillColor = "green",
+      color = "green",
+      label = ~ NAME)
 
-stops_routes <- stops_tidy %>%
-  left_join(stop_times_tidy, by = "stop_id") %>%
-  group_by(stop_id, route_id)
+here("03-maps",
+     "mbta-zips.html") %>%  
+  saveWidget(widget = mbta_map, .)
 ```
 
 ## 4. Use the summarize() function to count the number of trips per route at each stop:
 
 ```{r}
-stops_routes_count <- stops_routes %>%
-  summarize(n = n())
+mbta_blocks <- get_decennial(geography="block",
+                state = "MA", 
+                county = c("Barnstable","Bristol", "Worcester", "Suffolk", "Middlesex", "Norfolk", "Plymouth", "Essex"),
+                variables = demographics,
+                year = 2010,
+                geometry = TRUE) %>%
+  st_transform(st_crs(mbta_zctas)) %>%
+  mutate(area = st_area(.))
+
+mbta_blocks_in_zctas <- st_centroid(mbta_blocks) %>%
+  st_filter(mbta_zctas) %>%
+  select(GEOID) %>%
+  st_drop_geometry()
+  
+mbta_blocks_filtered <- mbta_blocks %>%
+  filter(GEOID %in% mbta_blocks_in_zctas$GEOID) %>%
+  #right_join(block_in_zctas) %>% 
+  st_join(mbta_stops_sums_sf, join = st_nearest_feature) %>%
+  select(GEOID, variable, value, route_id) %>%
+  pivot_wider(names_from = "variable",
+              values_from = "value")
+
+mbta_routes_summed <- mbta_blocks_filtered %>%
+  #mutate(non_white_pop = blk_pop + hispanic_pop + asian_pop + nat_am_pop + nhpi_pop) %>%
+  mutate(mbta_tot_pop = blk_pop + white_pop + hispanic_pop + asian_pop + nat_am_pop + nhpi_pop) %>%
+  st_drop_geometry() %>%
+  group_by(route_id) %>% 
+  summarise(across(.cols = -GEOID, sum))
 ```
 
 ## 5. Use the dplyr function arrange() to sort the data frame by the n column in descending order:
 
 ```{r}
-stops_routes_count <- stops_routes_count %>%
-  arrange(desc(n))
+mbta_route_zones <- mbta_blocks_filtered %>%
+  group_by(route_id) %>%
+  summarise()
+
+here("02-data",
+     "mbta-route-zones.geojson") %>%  
+  st_write(obj = mbta_route_zones, .)
 ```
 
 ## 6. Use the dplyr function slice() to select the first row of each group (i.e., the route with the highest number of trips at each stop):
 
 ```{r}
-stops_routes_top <- stops_routes_count %>%
-  group_by(stop_id) %>%
-  slice(1)
+mbta_route_zones <- here("02-data",
+                    "mbta-route-zones.geojson") %>%
+  st_read()
+mbta_map <- leaflet(mbta_route_zones) %>%
+  addProviderTiles(providers$Stamen.TonerLite) %>%
+  addPolygons(highlightOptions = highlightOptions(
+      weight = 1,
+      fillOpacity = 1,
+      bringToFront = FALSE),
+      weight = 1,
+      color = "green",
+      fillColor = "green",
+      label = mbta_route_zones$route_id) 
+
+here("03-maps",
+     "mbta-route-zones.html") %>%  
+  saveWidget(widget = mbta_map, .)
+```
+
+```{r}
+mbta_blocks %>%
+  st_drop_geometry() %>%
+  write_csv(here("02-data",
+                 "mbta-blocks-by-route.csv"))
 ```
 
 #Chicago
@@ -346,62 +423,162 @@ cta_stops <- read_csv(cta_stops_path) %>%
 
 cta_times_path <- "../02-data/CHICAGO_CTA_4OCT2019/stop_times.txt"
 
-cta_times <- read_csv(cta_times_path)
+cta_times <- read_csv(cta_times_path) %>%
+  mutate(trip_id = as.character(trip_id))
 
 cta_routes_path <- "../02-data/CHICAGO_CTA_4OCT2019/routes.txt"
 
-cta_routes <- read_csv(cta_routes_path)
+cta_routes <- read_csv(cta_routes_path) 
+  
+cta_stop_times_path <- "../02-data/CHICAGO_CTA_4OCT2019/stop_times.txt"
 
-#cta_times <- cta_times %>%
+cta_stop_times <- read_csv(cta_stop_times_path)
 
-#la_times <- la_times %>%
-  #separate(stop_headsign, into=c("route_short_name","route_desc"), sep=" - ", extra = "merge")  
+cta_trips_path <- "../02-data/CHICAGO_CTA_4OCT2019/trips.txt"
+
+cta_trips <- read_csv(cta_trips_path, col_types = cols(.default = col_character())) %>%
+  select(trip_id, route_id)
+
+cta_stops_sums <- cta_trips %>%
+  left_join(cta_times) %>%
+  group_by(stop_id, route_id) %>%
+  tally() %>%
+  left_join(cta_stops)
+
+cta_stop_sums_freq <- cta_stops_sums %>%
+  group_by(stop_id) %>%
+  slice_max(n) %>%
+  left_join(cta_stops)
+  
+cta_stops_sums_freq_sf = st_as_sf(cta_stop_sums_freq, coords = c("stop_lon", "stop_lat"), 
+                 crs = 4326, agr = "constant")  
   
 ```
 
-```{r}
-#la_stop_sums <- la_times %>%
-  #group_by(stop_id, route_short_name) %>%
-  #count()
-```
-
-## 2. Use the clean_gtfs() function to create tidy data frames for the stops and stop_times tables in the GTFS data:
+## 2.
 
 ```{r}
-stops_tidy <- clean_gtfs(gtfs_cta, "stops")
-stop_times_tidy <- clean_gtfs(gtfs_cta, "stop_times")
+cta_co = counties(state = "IL", year = 2010)
+
+cta_co <- cta_co %>%
+  filter(cta_co$NAME10 %in% c("Lake", "Cook", "Kane", "DuPage", "Will")) 
+
+cta_zctas <- get_decennial(geography = "zcta",
+                           state = "IL",
+                           variables = demographics,
+                           year = 2010,
+                           output = "wide",
+                          geometry = TRUE) %>%
+  st_filter(cta_co) %>%
+  mutate(area = st_area(.))
+
+cta_nstops <- lengths(st_is_within_distance(cta_zctas, cta_stops_sums_freq_sf, dist = 500))
+
+cta_zctas <- cta_zctas %>%
+ filter(cta_nstops > 0) %>%
+  #filter(NAME != "ZCTA5 90265, California" & # for boundaries to match
+          #NAME != "ZCTA5 91361, California" & # for boundaries to match
+          #NAME != "ZCTA5 91360, California" & # for boundaries to match
+          #NAME != "ZCTA5 91362, California" & # for boundaries to match
+          #NAME != "ZCTA5 91307, California" & # for boundaries to match
+          #NAME != "ZCTA5 90263, California" & # for a contiguous study area
+          #NAME != "ZCTA5 92833, California" & # Orange county
+          #NAME != "ZCTA5 90621, California" & # Orange county
+          #NAME != "ZCTA5 90620, California") %>% # Orange county
+  st_transform("WGS84")
+
+#st_is_within_distance(x, y = x, dist, sparse = TRUE)
+
+cta_zctas %>%
+  select(NAME) %>%
+  st_drop_geometry() %>%
+  write_csv(file = "../02-data/cta-area-zips.csv")
 ```
 
 ## 3. Use the dplyr package to join the stops_tidy and stop_times_tidy data frames on the stop_id column and group the data by stop_id and route_id:
 
 ```{r}
-library(dplyr)
+cta_map <- leaflet(cta_zctas) %>%
+  addProviderTiles(providers$Stamen.TonerLite) %>%
+  addPolygons(highlightOptions = highlightOptions(
+      weight = 1,
+      fillOpacity = 1,
+      bringToFront = TRUE),
+      weight = 1,
+      fillColor = "green",
+      color = "green",
+      label = ~ NAME)
 
-stops_routes <- stops_tidy %>%
-  left_join(stop_times_tidy, by = "stop_id") %>%
-  group_by(stop_id, route_id)
+here("03-maps",
+     "cta-zips.html") %>%  
+  saveWidget(widget = cta_map, .)
 ```
 
 ## 4. Use the summarize() function to count the number of trips per route at each stop:
 
 ```{r}
-stops_routes_count <- stops_routes %>%
-  summarize(n = n())
+cta_blocks <- get_decennial(geography="block",
+                state = "IL", 
+                county = c("Lake", "Cook", "Kane", "DuPage", "Will County"),
+                variables = demographics,
+                year = 2010,
+                geometry = TRUE) %>%
+  st_transform(st_crs(cta_zctas)) %>%
+  mutate(area = st_area(.))
+
+cta_blocks_in_zctas <- st_centroid(cta_blocks) %>%
+  st_filter(cta_zctas) %>%
+  select(GEOID) %>%
+  st_drop_geometry()
+  
+cta_blocks_filtered <- cta_blocks %>%
+  filter(GEOID %in% cta_blocks_in_zctas$GEOID) %>%
+  #right_join(block_in_zctas) %>% 
+  st_join(cta_stops_sums_freq_sf, join = st_nearest_feature) %>%
+  select(GEOID, route_id, variable, value) %>%
+  pivot_wider(names_from = "variable",
+              values_from = "value")
 ```
 
 ## 5. Use the dplyr function arrange() to sort the data frame by the n column in descending order:
 
 ```{r}
-stops_routes_count <- stops_routes_count %>%
-  arrange(desc(n))
+cta_route_zones <- cta_blocks_filtered %>%
+  group_by(route_id) %>%
+  summarise()
+
+here("02-data",
+     "cta-route-zones.geojson") %>%  
+  st_write(obj = cta_route_zones, .)
 ```
 
 ## 6. Use the dplyr function slice() to select the first row of each group (i.e., the route with the highest number of trips at each stop):
 
 ```{r}
-stops_routes_top <- stops_routes_count %>%
-  group_by(stop_id) %>%
-  slice(1)
+cta_route_zones <- here("02-data",
+                    "cta-route-zones.geojson") %>%
+  st_read()
+cta_map <- leaflet(cta_route_zones) %>%
+  addProviderTiles(providers$Stamen.TonerLite) %>%
+  addPolygons(highlightOptions = highlightOptions(
+      weight = 1,
+      fillOpacity = 1,
+      bringToFront = FALSE),
+      weight = 1,
+      color = "green",
+      fillColor = "green",
+      label = cta_route_zones$route_id) 
+
+here("03-maps",
+     "cta-route-zones.html") %>%  
+  saveWidget(widget = cta_map, .)
+```
+
+```{r}
+cta_blocks %>%
+  st_drop_geometry() %>%
+  write_csv(here("02-data",
+                 "cta-blocks-by-route.csv"))
 ```
 
 # Dallas
@@ -417,63 +594,349 @@ dart_stops <- read_csv(dart_stops_path) %>%
 
 dart_times_path <- "../02-data/DALLAS_DART_4OCT2019/stop_times.txt"
 
-dart_times <- read_csv(dart_times_path)
+dart_times <- read_csv(dart_times_path) %>%
+    mutate(trip_id = as.character(trip_id))
 
 dart_routes_path <- "../02-data/DALLAS_DART_4OCT2019/routes.txt"
 
 dart_routes <- read_csv(dart_routes_path)
 
-#dart_times <- dart_times %>%
+dart_trips_path <- "../02-data/DALLAS_DART_4OCT2019/trips.txt"
+
+dart_trips <- read_csv(dart_trips_path, col_types = cols(.default = col_character())) %>%
+  select(trip_id, route_id)
+
+dart_stops_sums <- dart_trips %>%
+  left_join(dart_times) %>%
+  group_by(stop_id, route_id) %>%
+  tally() %>%
+  left_join(dart_stops)
+
+dart_stop_sums_freq <- dart_stops_sums %>%
+  group_by(stop_id) %>%
+  slice_max(n)
   
-#la_times <- la_times %>%
-  #separate(stop_headsign, into=c("route_short_name","route_desc"), sep=" - ", extra = "merge")    
+dart_stops_sums_freq_sf = st_as_sf(cta_stop_sums_freq, coords = c("stop_lon", "stop_lat"), 
+                 crs = 4326, agr = "constant")
+
 ```
 
-```{r}
-#la_stop_sums <- la_times %>%
-  #group_by(stop_id, route_short_name) %>%
-  #count()
-```
+## 2.
+# DART Counties ------
+```{r mbta_counties}
+dart_co = counties(state = "TX", year = 2010)
 
+dart_co <- dart_co %>%
+  filter(dart_co$NAME10 %in% c("Dallas", "Tarrant", "Collin", "Denton", "Ellis", "Hunt", "Rockwall", "Kaufman"))
 
-## 2. Use the clean_gtfs() function to create tidy data frames for the stops and stop_times tables in the GTFS data:
+dart_zctas <- get_decennial(geography = "zcta",
+                           state = "TX",
+                           variables = demographics,
+                           year = 2010,
+                           output = "wide",
+                          geometry = TRUE) %>%
+  st_filter(dart_co) %>%
+  mutate(area = st_area(.))
 
-```{r}
-stops_tidy <- clean_gtfs(gtfs_dart, "stops")
-stop_times_tidy <- clean_gtfs(gtfs_dart, "stop_times")
+dart_nstops <- lengths(st_is_within_distance(dar_zctas, dart_stops_sums_sf, dist = 500))
+
+dart_zctas <- dart_zctas %>%
+ filter(dart_nstops > 0) %>%
+  #filter(NAME != "ZCTA5 90265, California" & # for boundaries to match
+          #NAME != "ZCTA5 91361, California" & # for boundaries to match
+          #NAME != "ZCTA5 91360, California" & # for boundaries to match
+          #NAME != "ZCTA5 91362, California" & # for boundaries to match
+          #NAME != "ZCTA5 91307, California" & # for boundaries to match
+          #NAME != "ZCTA5 90263, California" & # for a contiguous study area
+          #NAME != "ZCTA5 92833, California" & # Orange county
+          #NAME != "ZCTA5 90621, California" & # Orange county
+          #NAME != "ZCTA5 90620, California") %>% # Orange county
+  st_transform("WGS84")
+
+#st_is_within_distance(x, y = x, dist, sparse = TRUE)
+
+dart_zctas %>%
+  select(NAME) %>%
+  st_drop_geometry() %>%
+  write_csv(file = "../02-data/study-area-zips.csv")
 ```
 
 ## 3. Use the dplyr package to join the stops_tidy and stop_times_tidy data frames on the stop_id column and group the data by stop_id and route_id:
 
 ```{r}
-library(dplyr)
+dart_map <- leaflet(dart_zctas) %>%
+  addProviderTiles(providers$Stamen.TonerLite) %>%
+  addPolygons(highlightOptions = highlightOptions(
+      weight = 1,
+      fillOpacity = 1,
+      bringToFront = TRUE),
+      weight = 1,
+      fillColor = "green",
+      color = "green",
+      label = ~ NAME)
 
-stops_routes <- stops_tidy %>%
-  left_join(stop_times_tidy, by = "stop_id") %>%
-  group_by(stop_id, route_id)
+here("03-maps",
+     "dart-zips.html") %>%  
+  saveWidget(widget = dart_map, .)
 ```
 
 ## 4. Use the summarize() function to count the number of trips per route at each stop:
 
 ```{r}
-stops_routes_count <- stops_routes %>%
-  summarize(n = n())
+dart_blocks <- get_decennial(geography="block",
+                state = "TX", 
+                county = x,
+                variables = demographics,
+                year = 2010,
+                geometry = TRUE) %>%
+  st_transform(st_crs(dart_zctas))
+
+dart_blocks_in_zctas <- st_centroid(dart_blocks) %>%
+  st_filter(dart_zctas) %>%
+  select(GEOID) %>%
+  st_drop_geometry()
+  
+dart_blocks_filtered <- dart_blocks %>%
+  filter(GEOID %in% dart_blocks_in_zctas$GEOID) %>%
+  #right_join(block_in_zctas) %>% 
+  st_join(dart_stops_sums_sf, join = st_nearest_feature) %>%
+  select(GEOID, route_short_name, variable, value) %>%
+  pivot_wider(names_from = "variable",
+              values_from = "value")
 ```
 
 ## 5. Use the dplyr function arrange() to sort the data frame by the n column in descending order:
 
 ```{r}
-stops_routes_count <- stops_routes_count %>%
-  arrange(desc(n))
+dart_route_zones <- dart_blocks_filtered %>%
+  group_by(route_short_name) %>%
+  summarise()
+
+here("02-data",
+     "dart-route-zones.geojson") %>%  
+  st_write(obj = dart_route_zones, .)
 ```
 
 ## 6. Use the dplyr function slice() to select the first row of each group (i.e., the route with the highest number of trips at each stop):
 
 ```{r}
-stops_routes_top <- stops_routes_count %>%
-  group_by(stop_id) %>%
-  slice(1)
+dart_route_zones <- here("02-data",
+                    "dart-route-zones.geojson") %>%
+  st_read()
+dart_map <- leaflet(dart_route_zones) %>%
+  addProviderTiles(providers$Stamen.TonerLite) %>%
+  addPolygons(highlightOptions = highlightOptions(
+      weight = 1,
+      fillOpacity = 1,
+      bringToFront = FALSE),
+      weight = 1,
+      color = "green",
+      fillColor = "green",
+      label = dart_route_zones$route_short_name) 
+
+here("03-maps",
+     "dart-route-zones.html") %>%  
+  saveWidget(widget = dart_map, .)
 ```
+
+```{r}
+dart_blocks %>%
+  st_drop_geometry() %>%
+  write_csv(here("02-data",
+                 "dart-blocks-by-route.csv"))
+```
+
+# Measures of Segregation
+
+pi = the ratio of xi to ti (proportion of area i's population that is minority)
+xi = the minority population of area i
+ti = the total population of area i
+yi= the majority population (non-Hispanic Whites in this report) of area i
+X = the sum of all xi (the total minority population)
+T = the sum of all ti (the total population)
+P = the ratio of X to T (proportion of the metropolitan area's population that is minority)
+
+# The "Definitions" included in the paper are super useful, but they
+# break a bunch of math conventions that make using their variable
+# names confusing
+
+# So I'm going to write this the way a professional coder would expect
+# it to be written: only the input that's needed gets passed in to the
+# function, which in this case is the list of minority populations in
+# areas (this would be the list of x_i's in the paper)
+
+## IMPORTANT: for relative_concentation_index() to work, sort the 
+# min_pops_by_area (x_i) and tot_pops_by_area (t_i) by land_area_by_area (a_i)
+# from least (a_1) to greatest (a_1) => that's the only way the ranking works at
+# present
+
+# Index of Dissimilarity
+
+```{r}
+# dissimilarity // x_i = min_pops_by_area (list); t_i = tot_pops_by_area (list)
+dissimilarity_index <- function(min_pops_by_area, tot_pops_by_area) {
+  proportions_by_area <- min_pops_by_area / tot_pops_by_area # pi
+  proportions_by_area <- na.omit(proportions_by_area) # drop division errors / NAs
+  tot_min_pop <- sum(min_pops_by_area) # X
+  overall_pop <- sum(tot_pops_by_area) # T
+  overall_prop <- tot_min_pop / overall_pop # P
+
+  numerator <- sum(tot_min_pop * abs(proportions_by_area - overall_prop))
+  denominator <- 2*overall_pop*overall_prop*(1 - overall_prop)
+  dissimilarity <- numerator / denominator
+  return(dissimilarity)
+}
+```
+
+## LA Hispanic Population
+
+```{r}
+dissimilarity_index(min_pops_by_area = la_zctas$hispanic_pop, tot_pops_by_area = la_zctas$la_tot_pop)
+dissimilarity_index(min_pops_by_area = la_routes_summed$hispanic_pop, tot_pops_by_area = la_routes_summed$la_tot_pop)
+```
+
+## LA Black Population
+
+```{r}
+dissimilarity_index(min_pops_by_area = la_zctas$blk_pop, tot_pops_by_area = la_zctas$la_tot_pop)
+dissimilarity_index(min_pops_by_area = la_routes_summed$blk_pop, tot_pops_by_area = la_routes_summed$la_tot_pop)
+```
+
+## LA Asian Population
+
+```{r}
+dissimilarity_index(min_pops_by_area = la_zctas$asian_pop, tot_pops_by_area = la_zctas$la_tot_pop)
+dissimilarity_index(min_pops_by_area = la_routes_summed$asian_pop, tot_pops_by_area = la_routes_summed$la_tot_pop)
+```
+
+## Boston Hispanic Population
+
+```{r}
+dissimilarity_index(min_pops_by_area = mbta_zctas$hispanic_pop, tot_pops_by_area = mbta_zctas$mbta_tot_pop)
+dissimilarity_index(min_pops_by_area = mbta_routes_summed$hispanic_pop, tot_pops_by_area = mbta_routes_summed$mbta_tot_pop)
+```
+
+## Boston Black Population
+
+```{r}
+dissimilarity_index(min_pops_by_area = mbta_zctas$blk_pop, tot_pops_by_area = mbta_zctas$mbta_tot_pop)
+dissimilarity_index(min_pops_by_area = mbta_routes_summed$blk_pop, tot_pops_by_area = mbta_routes_summed$mbta_tot_pop)
+```
+
+## Boston Asian Population
+
+```{r}
+dissimilarity_index(min_pops_by_area = mbta_zctas$asian_pop, tot_pops_by_area = mbta_zctas$mbta_tot_pop)
+dissimilarity_index(min_pops_by_area = mbta_routes_summed$asian_pop, tot_pops_by_area = mbta_routes_summed$mbta_tot_pop)
+```
+
+# Index of isolation
+
+```{r}
+# isolation // x_i = min_pops_by_area (list); t_i = tot_pops_by_area (list)
+isolation_index <- function(min_pops_by_area, tot_pops_by_area) {
+  tot_min_pop <- sum(min_pops_by_area) # X
+  fraction_of_min_pop_by_area = min_pops_by_area / tot_min_pop # x_i / X
+  min_to_total_ratios = min_pops_by_area / tot_pops_by_area # x_i / t_i
+  return(sum(fraction_of_min_pop_by_area * min_to_total_ratios, na.rm = TRUE))
+}
+```
+
+## LA Hispanic Population
+
+```{r}
+isolation_index(la_zctas$hispanic_pop, la_zctas$la_tot_pop)
+isolation_index(la_routes_summed$hispanic_pop, la_routes_summed$la_tot_pop)
+```
+
+## LA Black Population
+
+```{r}
+isolation_index(la_zctas$blk_pop, la_zctas$la_tot_pop)
+isolation_index(la_routes_summed$blk_pop, la_routes_summed$la_tot_pop)
+```
+
+## LA Asian Population
+
+```{r}
+isolation_index(la_zctas$asian_pop, la_zctas$la_tot_pop)
+isolation_index(la_routes_summed$asian_pop, la_routes_summed$la_tot_pop)
+```
+
+## Boston Hispoanic Population
+
+```{r}
+isolation_index(mbta_zctas$hispanic_pop, mbta_zctas$mbta_tot_pop)
+isolation_index(mbta_routes_summed$hispanic_pop, mbta_routes_summed$mbta_tot_pop)
+```
+
+## Boston Black Population
+
+```{r}
+isolation_index(mbta_zctas$blk_pop, mbta_zctas$mbta_tot_pop)
+isolation_index(mbta_routes_summed$blk_pop, mbta_routes_summed$mbta_tot_pop)
+```
+
+## Boston Asian Population
+
+```{r}
+isolation_index(mbta_zctas$asian_pop, mbta_zctas$mbta_tot_pop)
+isolation_index(mbta_routes_summed$asian_pop, mbta_routes_summed$mbta_tot_pop)
+```
+
+# Index of Relative Concentration
+
+```{r}
+# relative concentration // x_i = min_pops_by_area (list); t_i = tot_pops_by_area (list); y_i = maj_pops_by_area; a_i = land_area_by_area
+relative_concentation_index <- function(min_pops_by_area, tot_pops_by_area, maj_pops_by_area, land_area_by_area) {
+  tot_min_pop <- sum(min_pops_by_area) # X
+  tot_maj_pop <- sum(maj_pops_by_area) # Y
+  
+  top_fraction <- sum((min_pops_by_area * land_area_by_area) / tot_min_pop) / sum((maj_pops_by_area * land_area_by_area) / tot_maj_pop)
+  numerator <- top_fraction - 1
+  
+  n <- length(min_pops_by_area)
+  # n1 = rank of area where the sum of all ti from area 1 (smallest in size) 
+  # up to area n1 is equal to X
+  n1 <- 0
+  running_total_sum_for_n1 <- 0
+  for (pop in tot_pops_by_area) {
+    if (running_total_sum_for_n1 + pop > tot_min_pop) {
+      break
+    } else {
+      running_total_sum_for_n1 <- running_total_sum_for_n1 + pop
+      n1 <- n1 + 1
+    }
+  }
+
+    # n2 = rank of area where the sum of all ti from area n (largest in size) 
+  # down to area n2 is equal to X
+  n2_offset <- 0
+  running_total_sum_for_n2 <- 0
+  for (pop in tot_min_pop) {
+    if (running_total_sum_for_n2 + pop > tot_min_pop) {
+      break
+    } else {
+      running_total_sum_for_n2 <- running_total_sum_for_n2 + pop
+      n2_offset <- n2_offset + 1
+    }
+  }
+  
+  n2 <- n - n2_offset
+  # T_1 = the sum of all ti in area 1 up to area n1
+  T_1 <- tot_pops_by_area[1:n1]
+  # T_2 = the sum of all ti in area n2 up to area n
+  T_2 <- tot_pops_by_area[n2:n]
+  bottom_fraction <- sum((tot_pops_by_area[1:n1] * land_area_by_area[1:n1]) / T_1) / sum((tot_pops_by_area[n2:n] * land_area_by_area[n2:n]) / T_2)
+  denominator <- bottom_fraction - 1
+  
+  return(numerator / denominator)
+}
+
+relative_concentation_index(c(5, 10, 15, 200), c(60, 60, 60, 60), c(50, 30, 30, 300), c(8000, 600, 400, 200))
+relative_concentation_index(c(500, 100, 150, 200), c(60, 60, 60, 60), c(600, 300, 300, 300), c(8000, 600, 400, 200))
+```
+
 
 ## Calculate accessibility
 
