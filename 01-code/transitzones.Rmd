@@ -489,6 +489,10 @@ cta_zctas <- cta_zctas %>%
 
 #st_is_within_distance(x, y = x, dist, sparse = TRUE)
 
+cta_zctas <- cta_zctas %>%
+  #mutate(non_white_pop = blk_pop + hispanic_pop + asian_pop + nat_am_pop + nhpi_pop) %>%
+  mutate(cta_tot_pop = blk_pop + white_pop + hispanic_pop + asian_pop + nat_am_pop + nhpi_pop)
+
 cta_zctas %>%
   select(NAME) %>%
   st_drop_geometry() %>%
@@ -538,6 +542,13 @@ cta_blocks_filtered <- cta_blocks %>%
   select(GEOID, route_id, variable, value) %>%
   pivot_wider(names_from = "variable",
               values_from = "value")
+
+cta_routes_summed <- cta_blocks_filtered %>%
+  #mutate(non_white_pop = blk_pop + hispanic_pop + asian_pop + nat_am_pop + nhpi_pop) %>%
+  mutate(cta_tot_pop = blk_pop + white_pop + hispanic_pop + asian_pop + nat_am_pop + nhpi_pop) %>%
+  st_drop_geometry() %>%
+  group_by(route_id) %>% 
+  summarise(across(.cols = -GEOID, sum))
 ```
 
 ## 5. Use the dplyr function arrange() to sort the data frame by the n column in descending order:
@@ -616,7 +627,7 @@ dart_stop_sums_freq <- dart_stops_sums %>%
   group_by(stop_id) %>%
   slice_max(n)
   
-dart_stops_sums_freq_sf = st_as_sf(cta_stop_sums_freq, coords = c("stop_lon", "stop_lat"), 
+dart_stops_sums_freq_sf = st_as_sf(dart_stop_sums_freq, coords = c("stop_lon", "stop_lat"), 
                  crs = 4326, agr = "constant")
 
 ```
@@ -638,7 +649,7 @@ dart_zctas <- get_decennial(geography = "zcta",
   st_filter(dart_co) %>%
   mutate(area = st_area(.))
 
-dart_nstops <- lengths(st_is_within_distance(dar_zctas, dart_stops_sums_sf, dist = 500))
+dart_nstops <- lengths(st_is_within_distance(dart_zctas, dart_stops_sums_freq_sf, dist = 500))
 
 dart_zctas <- dart_zctas %>%
  filter(dart_nstops > 0) %>%
@@ -654,6 +665,10 @@ dart_zctas <- dart_zctas %>%
   st_transform("WGS84")
 
 #st_is_within_distance(x, y = x, dist, sparse = TRUE)
+
+dart_zctas <- dart_zctas %>%
+  #mutate(non_white_pop = blk_pop + hispanic_pop + asian_pop + nat_am_pop + nhpi_pop) %>%
+  mutate(dart_tot_pop = blk_pop + white_pop + hispanic_pop + asian_pop + nat_am_pop + nhpi_pop)
 
 dart_zctas %>%
   select(NAME) %>%
@@ -685,7 +700,7 @@ here("03-maps",
 ```{r}
 dart_blocks <- get_decennial(geography="block",
                 state = "TX", 
-                county = x,
+                county = c("Dallas", "Tarrant", "Collin County", "Denton", "Ellis", "Hunt", "Rockwall", "Kaufman"),
                 variables = demographics,
                 year = 2010,
                 geometry = TRUE) %>%
@@ -699,17 +714,24 @@ dart_blocks_in_zctas <- st_centroid(dart_blocks) %>%
 dart_blocks_filtered <- dart_blocks %>%
   filter(GEOID %in% dart_blocks_in_zctas$GEOID) %>%
   #right_join(block_in_zctas) %>% 
-  st_join(dart_stops_sums_sf, join = st_nearest_feature) %>%
-  select(GEOID, route_short_name, variable, value) %>%
+  st_join(dart_stops_sums_freq_sf, join = st_nearest_feature) %>%
+  select(GEOID, route_id, variable, value) %>%
   pivot_wider(names_from = "variable",
               values_from = "value")
+
+dart_routes_summed <- dart_blocks_filtered %>%
+  #mutate(non_white_pop = blk_pop + hispanic_pop + asian_pop + nat_am_pop + nhpi_pop) %>%
+  mutate(dart_tot_pop = blk_pop + white_pop + hispanic_pop + asian_pop + nat_am_pop + nhpi_pop) %>%
+  st_drop_geometry() %>%
+  group_by(route_id) %>% 
+  summarise(across(.cols = -GEOID, sum))
 ```
 
 ## 5. Use the dplyr function arrange() to sort the data frame by the n column in descending order:
 
 ```{r}
 dart_route_zones <- dart_blocks_filtered %>%
-  group_by(route_short_name) %>%
+  group_by(route_id) %>%
   summarise()
 
 here("02-data",
@@ -830,6 +852,48 @@ dissimilarity_index(min_pops_by_area = mbta_zctas$asian_pop, tot_pops_by_area = 
 dissimilarity_index(min_pops_by_area = mbta_routes_summed$asian_pop, tot_pops_by_area = mbta_routes_summed$mbta_tot_pop)
 ```
 
+## Chicago Hispanic Population
+
+```{r}
+dissimilarity_index(min_pops_by_area = cta_zctas$hispanic_pop, tot_pops_by_area = cta_zctas$cta_tot_pop)
+dissimilarity_index(min_pops_by_area = cta_routes_summed$hispanic_pop, tot_pops_by_area = cta_routes_summed$cta_tot_pop)
+```
+
+## Chicago Black Population
+
+```{r}
+dissimilarity_index(min_pops_by_area = cta_zctas$blk_pop, tot_pops_by_area = cta_zctas$cta_tot_pop)
+dissimilarity_index(min_pops_by_area = cta_routes_summed$blk_pop, tot_pops_by_area = cta_routes_summed$cta_tot_pop)
+```
+
+## Chicago Asian Population
+
+```{r}
+dissimilarity_index(min_pops_by_area = cta_zctas$asian_pop, tot_pops_by_area = cta_zctas$cta_tot_pop)
+dissimilarity_index(min_pops_by_area = cta_routes_summed$asian_pop, tot_pops_by_area = cta_routes_summed$cta_tot_pop)
+```
+
+## Dallas Hispanic Population
+
+```{r}
+dissimilarity_index(min_pops_by_area = dart_zctas$hispanic_pop, tot_pops_by_area = dart_zctas$dart_tot_pop)
+dissimilarity_index(min_pops_by_area = dart_routes_summed$hispanic_pop, tot_pops_by_area = dart_routes_summed$dart_tot_pop)
+```
+
+## Dallas Black Population
+
+```{r}
+dissimilarity_index(min_pops_by_area = dart_zctas$blk_pop, tot_pops_by_area = dart_zctas$dart_tot_pop)
+dissimilarity_index(min_pops_by_area = dart_routes_summed$blk_pop, tot_pops_by_area = dart_routes_summed$dart_tot_pop)
+```
+
+## Dallas Asian Population
+
+```{r}
+dissimilarity_index(min_pops_by_area = dart_zctas$asian_pop, tot_pops_by_area = dart_zctas$dart_tot_pop)
+dissimilarity_index(min_pops_by_area = dart_routes_summed$asian_pop, tot_pops_by_area = dart_routes_summed$dart_tot_pop)
+```
+
 # Index of isolation
 
 ```{r}
@@ -882,6 +946,48 @@ isolation_index(mbta_routes_summed$blk_pop, mbta_routes_summed$mbta_tot_pop)
 ```{r}
 isolation_index(mbta_zctas$asian_pop, mbta_zctas$mbta_tot_pop)
 isolation_index(mbta_routes_summed$asian_pop, mbta_routes_summed$mbta_tot_pop)
+```
+
+## Chicago Hispanic Population
+
+```{r}
+isolation_index(cta_zctas$hispanic_pop, cta_zctas$cta_tot_pop)
+isolation_index(cta_routes_summed$hispanic_pop, cta_routes_summed$cta_tot_pop)
+```
+
+## Chicago Black Population
+
+```{r}
+isolation_index(cta_zctas$blk_pop, cta_zctas$cta_tot_pop)
+isolation_index(cta_routes_summed$blk_pop, cta_routes_summed$cta_tot_pop)
+```
+
+## Chicago Asian Population
+
+```{r}
+isolation_index(cta_zctas$asian_pop, cta_zctas$cta_tot_pop)
+isolation_index(cta_routes_summed$asian_pop, cta_routes_summed$cta_tot_pop)
+```
+
+## Dallas Hispanic Population
+
+```{r}
+isolation_index(dart_zctas$hispanic_pop, dart_zctas$dart_tot_pop)
+isolation_index(dart_routes_summed$hispanic_pop, dart_routes_summed$dart_tot_pop)
+```
+
+## Dallas Black Population
+
+```{r}
+isolation_index(dart_zctas$blk_pop, dart_zctas$dart_tot_pop)
+isolation_index(dart_routes_summed$blk_pop, dart_routes_summed$dart_tot_pop)
+```
+
+## Dallas Asian Population
+
+```{r}
+isolation_index(dart_zctas$asian_pop, dart_zctas$dart_tot_pop)
+isolation_index(dart_routes_summed$asian_pop, dart_routes_summed$dart_tot_pop)
 ```
 
 # Index of Relative Concentration
