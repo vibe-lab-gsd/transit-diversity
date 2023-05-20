@@ -20,6 +20,10 @@ library(tidytransit)
 library(utils)
 library(magrittr)
 library(here)
+library(raster)
+library(sp)
+library(dplyr)
+library(ggplot2)
 ```
 
 ```{r}
@@ -70,7 +74,7 @@ calendar.txt and calendar_dates.txt which service patterns are running on which 
 la_stops_path <- "../02-data/LA_Metro_4OCT2019/stops.txt"
 
 la_stops <- read_csv(la_stops_path) %>%
-  select(stop_id, stop_lon, stop_lat)
+  dplyr::select(stop_id, stop_lon, stop_lat)
 
 la_times_path <- "../02-data/LA_Metro_4OCT2019/stop_times.txt"
 
@@ -134,7 +138,7 @@ la_zctas <- la_zctas %>%
   mutate(la_tot_pop = blk_pop + white_pop + hispanic_pop + asian_pop + nat_am_pop + nhpi_pop)
 
 la_zctas %>%
-  select(NAME) %>%
+  dplyr::select(NAME) %>%
   st_drop_geometry() %>%
   write_csv(file = "../02-data/la-area-zips.csv")
 ```
@@ -177,14 +181,14 @@ la_blocks <- get_decennial(geography="block",
 
 blocks_in_la_zctas <- st_centroid(la_blocks) %>%
   st_filter(la_zctas) %>%
-  select(GEOID) %>%
+  dplyr::select(GEOID) %>%
   st_drop_geometry()
   
 la_blocks_filtered <- la_blocks %>%
   filter(GEOID %in% blocks_in_la_zctas$GEOID) %>%
   #right_join(block_in_zctas) %>%
   st_join(la_stops_sums_freq_sf, join = st_nearest_feature) %>%
-  select(GEOID, route_short_name, variable, value) %>%
+  dplyr::select(GEOID, route_short_name, variable, value) %>%
   pivot_wider(names_from = "variable",
               values_from = "value")
 
@@ -232,6 +236,25 @@ here("03-maps",
   saveWidget(widget = la_map, .)
 ```
 
+```{r}
+ggplot(data = la_route_zones) +
+  geom_sf()
+```
+```{r}
+# Step 1: Call the pdf command to start the plot
+pdf(file = "../03-maps/la_routes_plot",   # The directory you want to save the file in
+    width = 4, # The width of the plot in inches
+    height = 4) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+ggplot(data = la_route_zones) +
+  geom_sf()
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+```
+
+
 # Save the list of blocks
 
 ```{r}
@@ -249,14 +272,14 @@ la_blocks_filtered %>%
 mbta_stops_path <- "../02-data/BOSTON_MBTA_4OCT2019/stops.txt"
 
 mbta_stops <- read_csv(mbta_stops_path) %>%
-  select(stop_id, stop_lon, stop_lat)
+  dplyr::select(stop_id, stop_lon, stop_lat)
 
 mbta_times_path <- "../02-data/BOSTON_MBTA_4OCT2019/stop_times.txt"
 
 mbta_times <- read_csv(mbta_times_path)
 
 mbta_trips <- read_csv("../02-data/BOSTON_MBTA_4OCT2019/trips.txt") %>%
-  select(trip_id, route_id)
+  dplyr::select(trip_id, route_id)
 
 mbta_routes_path <- "../02-data/BOSTON_MBTA_4OCT2019/routes.txt"
 
@@ -294,15 +317,61 @@ mbta_nstops <- lengths(st_is_within_distance(mbta_zctas, mbta_stops_sums_sf, dis
 
 mbta_zctas <- mbta_zctas %>%
  filter(mbta_nstops > 0) %>%
-  #filter(NAME != "ZCTA5 90265, California" & # for boundaries to match
-          #NAME != "ZCTA5 91361, California" & # for boundaries to match
-          #NAME != "ZCTA5 91360, California" & # for boundaries to match
-          #NAME != "ZCTA5 91362, California" & # for boundaries to match
-          #NAME != "ZCTA5 91307, California" & # for boundaries to match
-          #NAME != "ZCTA5 90263, California" & # for a contiguous study area
-          #NAME != "ZCTA5 92833, California" & # Orange county
-          #NAME != "ZCTA5 90621, California" & # Orange county
-          #NAME != "ZCTA5 90620, California") %>% # Orange county
+  filter(NAME != "ZCTA5 02346, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 02347, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 02324, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 02341, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 02338, Massachusetts" & # for boundaries to match 
+          NAME != "ZCTA5 02382, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 02351, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 02190, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 02703, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 02048, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 02035, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 01605, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 01604, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 01545, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 01536, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 01581, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 01608, Massachusetts" & # for boundaries to match 
+          NAME != "ZCTA5 01772, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 01748, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 01721, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 01702, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 01760, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 01420, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 01453, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 01464, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 01434, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 01432, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 01460, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 01720, Massachusetts" & # for boundaries to match 
+          NAME != "ZCTA5 01742, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 01857, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 01851, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 01852, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 01862, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 01821, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 01840, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 01843, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 01810, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 01832, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 01830, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 01835, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 01950, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 01951, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 01969, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 01938, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 01982, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 01930, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 01966, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 01944, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 02066, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 02045, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 02122, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 02025, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 02364, Massachusetts" & # for boundaries to match
+          NAME != "ZCTA5 02360, Massachusetts") %>% 
   st_transform("WGS84")
 
 #st_is_within_distance(x, y = x, dist, sparse = TRUE)
@@ -312,7 +381,7 @@ mbta_zctas <- mbta_zctas %>%
   mutate(mbta_tot_pop = blk_pop + white_pop + hispanic_pop + asian_pop + nat_am_pop + nhpi_pop)
 
 mbta_zctas %>%
-  select(NAME) %>%
+  dplyr::select(NAME) %>%
   st_drop_geometry() %>%
   write_csv(file = "../02-data/mbta-area-zips.csv")
 ```
@@ -350,14 +419,14 @@ mbta_blocks <- get_decennial(geography="block",
 
 mbta_blocks_in_zctas <- st_centroid(mbta_blocks) %>%
   st_filter(mbta_zctas) %>%
-  select(GEOID) %>%
+  dplyr::select(GEOID) %>%
   st_drop_geometry()
   
 mbta_blocks_filtered <- mbta_blocks %>%
   filter(GEOID %in% mbta_blocks_in_zctas$GEOID) %>%
   #right_join(block_in_zctas) %>% 
   st_join(mbta_stops_sums_sf, join = st_nearest_feature) %>%
-  select(GEOID, variable, value, route_id) %>%
+  dplyr::select(GEOID, variable, value, route_id) %>%
   pivot_wider(names_from = "variable",
               values_from = "value")
 
@@ -404,6 +473,26 @@ here("03-maps",
 ```
 
 ```{r}
+ggplot(data = mbta_route_zones) +
+  geom_sf()
+```
+
+
+```{r}
+# Step 1: Call the pdf command to start the plot
+pdf(file = "../03-maps/mbta_routes_plot",   # The directory you want to save the file in
+    width = 4, # The width of the plot in inches
+    height = 4) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+ggplot(data = mbta_route_zones) +
+  geom_sf()
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+```
+
+```{r}
 mbta_blocks %>%
   st_drop_geometry() %>%
   write_csv(here("02-data",
@@ -419,7 +508,7 @@ mbta_blocks %>%
 cta_stops_path <- "../02-data/CHICAGO_CTA_4OCT2019/stops.txt"
 
 cta_stops <- read_csv(cta_stops_path) %>%
-  select(stop_id, stop_lon, stop_lat)
+  dplyr::select(stop_id, stop_lon, stop_lat)
 
 cta_times_path <- "../02-data/CHICAGO_CTA_4OCT2019/stop_times.txt"
 
@@ -437,7 +526,7 @@ cta_stop_times <- read_csv(cta_stop_times_path)
 cta_trips_path <- "../02-data/CHICAGO_CTA_4OCT2019/trips.txt"
 
 cta_trips <- read_csv(cta_trips_path, col_types = cols(.default = col_character())) %>%
-  select(trip_id, route_id)
+  dplyr::select(trip_id, route_id)
 
 cta_stops_sums <- cta_trips %>%
   left_join(cta_times) %>%
@@ -494,7 +583,7 @@ cta_zctas <- cta_zctas %>%
   mutate(cta_tot_pop = blk_pop + white_pop + hispanic_pop + asian_pop + nat_am_pop + nhpi_pop)
 
 cta_zctas %>%
-  select(NAME) %>%
+  dplyr::select(NAME) %>%
   st_drop_geometry() %>%
   write_csv(file = "../02-data/cta-area-zips.csv")
 ```
@@ -532,14 +621,14 @@ cta_blocks <- get_decennial(geography="block",
 
 cta_blocks_in_zctas <- st_centroid(cta_blocks) %>%
   st_filter(cta_zctas) %>%
-  select(GEOID) %>%
+  dplyr::select(GEOID) %>%
   st_drop_geometry()
   
 cta_blocks_filtered <- cta_blocks %>%
   filter(GEOID %in% cta_blocks_in_zctas$GEOID) %>%
   #right_join(block_in_zctas) %>% 
   st_join(cta_stops_sums_freq_sf, join = st_nearest_feature) %>%
-  select(GEOID, route_id, variable, value) %>%
+  dplyr::select(GEOID, route_id, variable, value) %>%
   pivot_wider(names_from = "variable",
               values_from = "value")
 
@@ -586,6 +675,20 @@ here("03-maps",
 ```
 
 ```{r}
+# Step 1: Call the pdf command to start the plot
+pdf(file = "../03-maps/cta_routes_plot",   # The directory you want to save the file in
+    width = 4, # The width of the plot in inches
+    height = 4) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+ggplot(data = cta_route_zones) +
+  geom_sf()
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+```
+
+```{r}
 cta_blocks %>%
   st_drop_geometry() %>%
   write_csv(here("02-data",
@@ -601,7 +704,7 @@ cta_blocks %>%
 dart_stops_path <- "../02-data/DALLAS_DART_4OCT2019/stops.txt"
 
 dart_stops <- read_csv(dart_stops_path) %>%
-  select(stop_id, stop_lon, stop_lat)
+  dplyr::select(stop_id, stop_lon, stop_lat)
 
 dart_times_path <- "../02-data/DALLAS_DART_4OCT2019/stop_times.txt"
 
@@ -615,7 +718,7 @@ dart_routes <- read_csv(dart_routes_path)
 dart_trips_path <- "../02-data/DALLAS_DART_4OCT2019/trips.txt"
 
 dart_trips <- read_csv(dart_trips_path, col_types = cols(.default = col_character())) %>%
-  select(trip_id, route_id)
+  dplyr::select(trip_id, route_id)
 
 dart_stops_sums <- dart_trips %>%
   left_join(dart_times) %>%
@@ -629,7 +732,6 @@ dart_stop_sums_freq <- dart_stops_sums %>%
   
 dart_stops_sums_freq_sf = st_as_sf(dart_stop_sums_freq, coords = c("stop_lon", "stop_lat"), 
                  crs = 4326, agr = "constant")
-
 ```
 
 ## 2.
@@ -671,7 +773,7 @@ dart_zctas <- dart_zctas %>%
   mutate(dart_tot_pop = blk_pop + white_pop + hispanic_pop + asian_pop + nat_am_pop + nhpi_pop)
 
 dart_zctas %>%
-  select(NAME) %>%
+  dplyr::select(NAME) %>%
   st_drop_geometry() %>%
   write_csv(file = "../02-data/study-area-zips.csv")
 ```
@@ -708,14 +810,14 @@ dart_blocks <- get_decennial(geography="block",
 
 dart_blocks_in_zctas <- st_centroid(dart_blocks) %>%
   st_filter(dart_zctas) %>%
-  select(GEOID) %>%
+  dplyr::select(GEOID) %>%
   st_drop_geometry()
   
 dart_blocks_filtered <- dart_blocks %>%
   filter(GEOID %in% dart_blocks_in_zctas$GEOID) %>%
   #right_join(block_in_zctas) %>% 
   st_join(dart_stops_sums_freq_sf, join = st_nearest_feature) %>%
-  select(GEOID, route_id, variable, value) %>%
+  dplyr::select(GEOID, route_id, variable, value) %>%
   pivot_wider(names_from = "variable",
               values_from = "value")
 
@@ -762,6 +864,20 @@ here("03-maps",
 ```
 
 ```{r}
+# Step 1: Call the pdf command to start the plot
+pdf(file = "../03-maps/dart_routes_plot",   # The directory you want to save the file in
+    width = 4, # The width of the plot in inches
+    height = 4) # The height of the plot in inches
+
+# Step 2: Create the plot with R code
+ggplot(data = dart_route_zones) +
+  geom_sf()
+
+# Step 3: Run dev.off() to create the file!
+dev.off()
+```
+
+```{r}
 dart_blocks %>%
   st_drop_geometry() %>%
   write_csv(here("02-data",
@@ -775,6 +891,7 @@ xi = the minority population of area i
 ti = the total population of area i
 yi= the majority population (non-Hispanic Whites in this report) of area i
 X = the sum of all xi (the total minority population)
+Y = the sum of all yi (the total majority population)
 T = the sum of all ti (the total population)
 P = the ratio of X to T (proportion of the metropolitan area's population that is minority)
 
@@ -797,14 +914,16 @@ P = the ratio of X to T (proportion of the metropolitan area's population that i
 ```{r}
 # dissimilarity // x_i = min_pops_by_area (list); t_i = tot_pops_by_area (list)
 dissimilarity_index <- function(min_pops_by_area, tot_pops_by_area) {
+  min_pops_by_area <- min_pops_by_area[tot_pops_by_area != 0]
+  tot_pops_by_area <- tot_pops_by_area[tot_pops_by_area != 0]
   proportions_by_area <- min_pops_by_area / tot_pops_by_area # pi
-  proportions_by_area <- na.omit(proportions_by_area) # drop division errors / NAs
+  #proportions_by_area <- na.omit(proportions_by_area) # drop division errors / NAs
   tot_min_pop <- sum(min_pops_by_area) # X
   overall_pop <- sum(tot_pops_by_area) # T
   overall_prop <- tot_min_pop / overall_pop # P
 
-  numerator <- sum(tot_min_pop * abs(proportions_by_area - overall_prop))
-  denominator <- 2*overall_pop*overall_prop*(1 - overall_prop)
+  numerator <- sum(tot_pops_by_area * abs(proportions_by_area - overall_prop))
+  denominator <- (2*overall_pop*overall_prop)*(1 - overall_prop)
   dissimilarity <- numerator / denominator
   return(dissimilarity)
 }
@@ -1041,93 +1160,4 @@ relative_concentation_index <- function(min_pops_by_area, tot_pops_by_area, maj_
 
 relative_concentation_index(c(5, 10, 15, 200), c(60, 60, 60, 60), c(50, 30, 30, 300), c(8000, 600, 400, 200))
 relative_concentation_index(c(500, 100, 150, 200), c(60, 60, 60, 60), c(600, 300, 300, 300), c(8000, 600, 400, 200))
-```
-
-
-## Calculate accessibility
-
-```{r}
-# Load the required libraries
-library(igraph)
-library(httr)
-
-# Define the API key
-api_key <- "b8064d02a4943b2c25e30fca13e816fc"
-
-# Define the base URL for the API
-base_url <- "https://api.metro.net"
-
-# Define the endpoint for the bus routes
-routes_endpoint <- "/api/v3/routes"
-
-# Make a request to the API to retrieve the bus routes
-routes_response <- GET(paste0(base_url, routes_endpoint), query = list(api_key = api_key))
-
-# Parse the JSON response into a data frame
-routes_data <- content(routes_response, as = "parsed")$items
-
-# Filter the routes data to only include bus routes
-bus_routes_data <- routes_data[routes_data$mode == "bus",]
-
-# Define the endpoint for the stops
-stops_endpoint <- "/api/v3/stops"
-
-# Make a request to the API to retrieve the stops
-stops_response <- GET(paste0(base_url, stops_endpoint), query = list(api_key = api_key))
-
-# Parse the JSON response into a data frame
-stops_data <- content(stops_response, as = "parsed")$items
-
-# Create a graph object representing the LA Metro bus network
-bus_network_graph <- graph_empty(n = nrow(stops_data))
-
-# Add edges between the stops to represent the bus routes
-for (i in 1:nrow(bus_routes_data)) {
-  route_id <- bus_routes_data[i, "id"]
-  route_endpoint <- paste0("/api/v3/routes/", route_id, "/sequence")
-  route_response <- GET(paste0(base_url, route_endpoint), query = list(api_key = api_key))
-  route_data <- content(route_response, as = "parsed")$items
-  
-  for (j in 1:(length(route_data) - 1)) {
-    stop1 <- route_data[j]
-    stop2 <- route_data[j + 1]
-    edge_id <- c(stop1$id, stop2$id)
-    edge_weight <- distHaversine(c(stop1$latitude, stop1$longitude), c(stop2$latitude, stop2$longitude))
-    E(bus_network_graph) <- c(E(bus_network_graph), edge_id)
-    set.edge.attribute(bus_network_graph, name = "weight", index = E(bus_network_graph)[length(E(bus_network_graph))], value = edge_weight)
-  }
-}
-
-# Define a function to calculate the accessibility measure for a given origin and destination
-calculate_accessibility <- function(origin, destination) {
-  shortest_path <- shortest.paths(bus_network_graph, origin, destination, weights = E(bus_network_graph)$weight, output = "epath")
-  accessibility <- sum(E(bus_network_graph)$weight[shortest_path[[1]]])
-  return(accessibility)
-}
-```
-
-```{r}
-library(ggplot2)
-
-# Create a data frame to store the accessibility values
-accessibility_data <- data.frame(origin = character(), destination = character(), accessibility = numeric())
-
-# Loop over all combinations of origin and destination stops
-for (i in 1:nrow(stops_data)) {
-  for (j in 1:nrow(stops_data)) {
-    # Calculate the accessibility between the origin and destination
-    accessibility <- calculate_accessibility(i, j)
-    # Add the origin, destination, and accessibility values to the data frame
-    accessibility_data <- rbind(accessibility_data, data.frame(origin = stops_data$stop_id[i], destination = stops_data$stop_id[j], accessibility = accessibility))
-  }
-}
-
-# Plot the accessibility data as a heat map
-ggplot(data = accessibility_data, aes(x = origin, y = destination, fill = accessibility)) +
-  geom_tile() +
-  scale_fill_gradient(low = "white", high = "red") +
-  theme_minimal() +
-  xlab("Origin") +
-  ylab("Destination") +
-  ggtitle("Accessibility between Bus Stops in LA Metro")
 ```
